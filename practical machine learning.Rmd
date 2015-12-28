@@ -1,0 +1,164 @@
+---
+title: "Prediction Assignment Writeup"
+author: "PNS"
+date: "December 23, 2015"
+output: html_document
+---
+
+Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+Data 
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment. 
+
+# EXPLORE & CLEANING DATA
+
+1. Set and load all required libraries 
+2. Load and explore data in the Training & Test Datasets
+
+```{r}
+
+library(rpart)
+library(rpart.plot)
+library(caret)
+library(randomForest)
+
+
+# Load data
+train_ori <- read.csv(file = "pml-training.csv", na.strings=c("NA",""), header = TRUE, sep = ",")
+test_ori <- read.csv(file = "pml-testing.csv", na.strings=c("NA",""), header = TRUE, sep = ",")
+
+```
+
+- Dimension of Training Data
+```{r}
+dim(train_ori)
+```
+
+- Dimension of Testing Data
+```{r}
+dim(test_ori)
+```
+
+3. Ensure column names (excluding classe and problem_id) are identical in training and test dataset
+```{r}
+
+colnames_train <- colnames(train_ori)
+colnames_test <- colnames(test_ori)
+
+all.equal(colnames_train[1:length(colnames_train)-1], colnames_test[1:length(colnames_train)-1])
+
+```
+
+4. Remove variables that have too many "NA" values
+- Remove "Na"s and the 7 first column
+
+```{r}
+# Count the number of non-NAs in each column.
+nonNAs <- function(x) 
+{
+    as.vector(apply(x, 2, function(x) length(which(!is.na(x)))))
+}
+
+# Build vector of missing data or NA columns to drop.
+colcnts <- nonNAs(train_ori)
+drops <- c()
+for (cnt in 1:length(colcnts)) {
+    if (colcnts[cnt] < nrow(train_ori)) {
+        drops <- c(drops, colnames_train[cnt])
+    }
+}
+
+# Drop NA data and the first 7 columns as they're unnecessary for predicting.
+train_ori <- train_ori[,!(names(train_ori) %in% drops)]
+train_ori <- train_ori[,8:length(colnames(train_ori))]
+
+test_ori <- test_ori[,!(names(test_ori) %in% drops)]
+test_ori <- test_ori[,8:length(colnames(test_ori))]
+
+```
+
+5. Check the variables that have extremely low variance
+- check for covariates that have virtually no variablility.
+
+```{r}
+nsv <- nearZeroVar(train_ori, saveMetrics=TRUE)
+nsv
+
+```
+
+Simce all of the near zero variance variables (nsv) are FALSE, there's no need to eliminate any covariates due to lack of variablility.
+
+6. Since 53 features were still a huge numbers for prediction, we will preprocess the 52 features (exclude the "classe") with principle component analysis (pca). Use 90% as a threshold to catch variance of training data. Hence reduce it to 19 components.
+
+```{r}
+
+ncols <- dim(train_ori)[2]
+preProc <- preProcess(train_ori[,-ncols], method='pca',thresh=0.9)
+preProc
+
+t.pca <- predict(preProc, train_ori[,-ncols])
+train_ori.pca <- cbind(t.pca, train_ori$classe)
+names(train_ori.pca)[20] <- "classe"
+test.pca <- predict(preProc, test_ori[,-ncols])
+
+```
+
+# CROSS VALIDATION
+
+1. Perform a cross validation 
+
+As we were provided with a large training set (19,622 entries) and a small testing set (20 entries). We then split it into a training set (comprising 60% of the entries) and a testing set (comprising 40% of the entries).
+
+```{r}
+
+set.seed(777)
+inTrain <- createDataPartition(y=train_ori.pca$classe, p=0.6, list=FALSE)
+df_60 <- train_ori.pca[inTrain,]
+df_40 <- train_ori.pca[-inTrain,]
+
+set.seed(777)
+modFit <- train(df_60$classe ~ ., method="rf", preProcess=c("center", "scale"), trControl=trainControl(method = "cv"), data=df_60)
+print(modFit, digits=3)
+
+predictions <- predict(modFit, newdata=df_40)
+print(confusionMatrix(predictions, df_40$classe), digits=4)
+```
+
+# MODELFIT & PREDICTION 
+- Fit the models 
+
+```{r}
+fit1 <- train(classe ~., data=train_ori.pca, method='rf')
+fit1
+
+```
+
+Use the model fit1 on test.pca to classify the samples. The final estimation of the accuracy of the prediciton would be tested in the submission part of this project.
+
+```{r}
+pred <- predict(fit1, test.pca)
+pred
+
+```
+
+
+Write the prediction resulte to files
+```{r}
+pml_write_files = function(x){
+  n = length(x)
+    for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file= filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+pml_write_files(pred)
+
+```
+
+# Conclusion
+As seen by the result of the confusionmatrix, the model is quite good and efficient because it has an accuracy of 0.9678 and very good sensitivity & specificity values on the testing dataset. (the lowest value is 0.9696 for the sensitivity of the class D)
+
+It seems also very good because It scores 100% (20/20) on the Course Project Submission (the 20 values to predict)
